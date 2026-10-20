@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Python migrations, packages, rollback, privacy, links and golden plans
+        run: python -m unittest discover -s tests -v
+      - name: Starter validation and release allowlist
+        run: |
+          python scripts/tooling.py validate-starter --root . --report test-output/ci-starter.md
+          python scripts/release.py
+      - name: PowerShell 7 native lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./tests/native-lifecycle.ps1 -FixtureRoot ./test-output/native-pwsh/vault
+          ./scripts/validate-starter-kit.ps1 -Report ./test-output/ci-native-starter.md
+          $errorsFound = @()
+          Get-ChildItem installer,scripts,tests -Recurse -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$tokens,[ref]$parseErrors) | Out-Null
+            $errorsFound += $parseErrors
+          }
+          if ($errorsFound.Count) { $errorsFound | Format-List; exit 1 }
+      - name: Windows PowerShell 5.1 native lifecycle
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/native-lifecycle.ps1 -FixtureRoot ./test-output/native-ps51/vault
+      - name: Bash syntax and clean installation
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash -n install.sh initialize.sh scripts/*.sh
+          bash install.sh --answers installer/answers.example.json --target test-output/bash-vault --operation new --approve
+          bash install.sh --target test-output/bash-vault --operation validate
+      - name: ShellCheck
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+          shellcheck install.sh initialize.sh scripts/*.sh
+      - name: Freeze source candidate
+        run: python scripts/release.py --freeze
+      - name: Stage and test client folder
+        run: python scripts/release.py --stage --candidate auto
+
+  release-archive:
+    needs: safety
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Freeze source, stage and test client folder, then build exact archive
+        run: |
+          python scripts/release.py --freeze
+          python scripts/release.py --stage --candidate auto
+          python scripts/release.py --build --payload auto
+      - name: Smoke test extracted final archive
+        shell: bash
+        run: |
+          mkdir -p test-output/archive-source
+          unzip -q build/kos-starter-kit-v*.zip -d test-output/archive-source
+          cd test-output/archive-source
+          bash install.sh --answers installer/answers.example.json --target ../archive-vault --operation new --approve
+          bash install.sh --target ../archive-vault --operation validate

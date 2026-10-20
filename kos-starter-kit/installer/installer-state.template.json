@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0.0",
+  "edition": "community",
+  "communityVersion": "1.0.0",
+  "starterKitVersion": "1.2.0",
+  "installerVersion": "1.2.0",
+  "kosContractVersion": "1.0.0",
+  "profile": "standard",
+  "providers": [],
+  "capabilities": [],
+  "components": {},
+  "includeSamples": false,
+  "customModules": [],
+  "origin": "new",
+  "versionSource": "installer/release.json"
+}
